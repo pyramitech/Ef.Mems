@@ -1,0 +1,41 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.MtmDiffModel>
+@using Ef.Mems.SourceGenerators
+@{ var mtm = Model.Mtm; }
+            // A null join list means "no links": normalize the incoming list
+            // (as Create does) and read the cached original null-safely.
+            if (item.@(mtm.NavName) == null) item.@(mtm.NavName) = new List<@mtm.ChildType>();
+            var __orig_@(mtm.NavName) = original.@(mtm.NavName) ?? new List<@mtm.ChildType>();
+            newAdded = 0;
+            for (int i = 0; i @("<") item.@(mtm.NavName).Count; i++) {
+                var subItem = item.@(mtm.NavName)[i];
+                EntityEntry<@mtm.ChildType> subEntry = null;
+                var subOriginal = __orig_@(mtm.NavName).FirstOrDefault(x => @mtm.OthersKeyEqual("subItem"));
+                if (subOriginal == null) {
+                    ++newAdded;
+                    ctx.Entry(subItem).State = EntityState.Added;
+                    @(Model.AddList).Add(subItem);
+@if (mtm.ChildProps.Count != 0)
+{
+                @:} else {
+@foreach (var p in mtm.ChildProps)
+{
+                    @:if (@p.NotEqual("subOriginal", "subItem")) {
+                        @:if (subEntry == null) {
+                            @:subEntry = ctx.EnsureAttached(subItem);
+                            @:updateList_@(mtm.NavName).Add(subItem);
+                        @:}
+                        @:subEntry.Property(x => x.@(p.Name)).IsModified = true;
+                    @:}
+}
+}
+                }
+            }
+            if (__orig_@(mtm.NavName).Count + newAdded != item.@(mtm.NavName).Count) {
+                for (int i = 0; i @("<") __orig_@(mtm.NavName).Count; i++) {
+                    var subItem = __orig_@(mtm.NavName)[i];
+                    if (item.@(mtm.NavName).All(x => @mtm.OthersKeyNotEqual("subItem"))) {
+                        ctx.Entry(subItem).State = EntityState.Deleted;
+                        deleteList_@(mtm.NavName).Add(subItem);
+                    }
+                }
+            }

@@ -1,0 +1,115 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.EntityModel>
+@using Ef.Mems.SourceGenerators
+    public sealed class @(Model.Name)ReadOnly : IEntityAccessor<@Model.EntityType>@(Model.UnionInterfacesSuffix)
+    {
+        private readonly @Model.EntityType _entity;
+@if (!Model.CachesAllProperties)
+{
+        @:private readonly @Model.Store.StoreType _store;
+}
+@foreach (var nav in Model.ManyNavs)
+{
+        @:private readonly List<@(nav.ChildName)ReadOnly> _@(nav.Nav);
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+        @:private @(mtm.ChildName)ReadOnly[] _@(mtm.NavName);
+}
+@foreach (var o in Model.Owneds)
+{
+        @:private readonly @o.WrapperName _own_@(o.Name);
+}
+        internal @(Model.Name)ReadOnly(@Model.EntityType e@(Model.RoCtorExtraParam)) { _entity = e;
+@if (!Model.CachesAllProperties)
+{
+        @:_store = store;
+}
+@foreach (var nav in Model.ManyNavs)
+{
+        @:_@(nav.Nav) = e.@(nav.Nav)?.Select(x => new @(nav.ChildName)ReadOnly(x)).ToList() ?? new List<@(nav.ChildName)ReadOnly>();
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+        @:_@(mtm.NavName) = e.@(mtm.NavName)?.Select(x => new @(mtm.ChildName)ReadOnly(x)).ToArray() ?? Array.Empty<@(mtm.ChildName)ReadOnly>();
+}
+@foreach (var o in Model.Owneds)
+{
+        @:_own_@(o.Name) = e.@(o.Name) == null ? null : new @(o.WrapperName)(e.@(o.Name));
+}
+        }
+@foreach (var p in Model.Properties)
+{
+        @:public @p.RoType @p.Name => _entity.@(p.Name);
+}
+@foreach (var o in Model.Owneds)
+{
+        @:public @o.WrapperName @o.Name => _own_@(o.Name);
+}
+@foreach (var nav in Model.ManyNavs)
+{
+        @:public IReadOnlyList<@(nav.ChildName)ReadOnly> @nav.Nav => _@(nav.Nav);
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+        @:public IReadOnlyList<@(mtm.ChildName)ReadOnly> @mtm.NavName => Volatile.Read(ref _@(mtm.NavName));
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+
+        @:[EditorBrowsable(EditorBrowsableState.Never)]
+        @:internal void __Add_@(mtm.NavName)(@(mtm.ChildName)ReadOnly item) => Snapshot.Append(ref _@(mtm.NavName), item);
+        @:[EditorBrowsable(EditorBrowsableState.Never)]
+        @:internal void __Remove_@(mtm.NavName)(@(mtm.ChildName)ReadOnly item) => Snapshot.Remove(ref _@(mtm.NavName), item);
+}
+
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        [Obsolete("Only used internally, do not use this function outside of generated types or you risk corrupting the cache", error: false)]
+        @Model.EntityType IEntityAccessor<@Model.EntityType>.__GetRawEntity() => _entity;
+
+@if (Model.CachesAllProperties)
+{
+        @:public @Model.EntityType GetEntity()
+        @:{
+        @:    var copy = new @Model.EntityType
+        @:    {
+    foreach (var p in Model.Properties)
+    {
+                @:@(p.Name) = @(p.CloneExpr("_entity")),
+    }
+    foreach (var nav in Model.ManyNavs)
+    {
+                @:@(nav.Nav) = this.@(nav.Nav).Select(x => x.GetEntity()).ToList(),
+    }
+    foreach (var mtm in Model.ManyToManys)
+    {
+                @:@(mtm.NavName) = this.@(mtm.NavName).Select(x => x.GetEntity()).ToList(),
+    }
+    foreach (var o in Model.Owneds)
+    {
+                @:@(o.Name) = @(o.CloneExpr("_entity")),
+    }
+        @:    };
+        @:    return copy;
+        @:}
+}
+else
+{
+        @:// Not all properties are cached: fetch the full entity from the
+        @:// context instead of cloning the (incomplete) cached copy.
+        @:public async Task<@Model.EntityType> GetEntity()
+        @:{
+        @:    var key = _entity.@Model.UpdateKey;
+        @:    using var ctx = _store.GetContext();
+        @:    var query = ctx.Set<@Model.EntityType>().AsQueryable().AsSplitQuery().AsNoTracking();
+    foreach (var nav in Model.ManyNavs)
+    {
+        @:    query = query.Include(e => e.@(nav.Nav));
+    }
+    foreach (var mtm in Model.ManyToManys)
+    {
+        @:    query = query.Include(e => e.@(mtm.NavName));
+    }
+        @:    return await query.FirstOrDefaultAsync(e => e.@Model.UpdateKey == key);
+        @:}
+}
+    }

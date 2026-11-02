@@ -1,0 +1,35 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.MtmModel>
+@using Ef.Mems.SourceGenerators
+                if (addList_@(Model.NavName).Count != 0) {
+                    for (int i = 0; i @("<") addList_@(Model.NavName).Count; i++) {
+                        var mtm = addList_@(Model.NavName)[i];
+@foreach (var target in Model.Others)
+{
+                        @:{
+    Write(new MtmAddCoreTemplate(Model.Fragment(target)));
+                        @:}
+}
+                    }
+                }
+                if (updateList_@(Model.NavName).Count != 0) {
+                    for (int i = 0; i @("<") updateList_@(Model.NavName).Count; i++) {
+                        var mtm = updateList_@(Model.NavName)[i];
+@foreach (var target in Model.Others)
+{
+                        @:{
+    Write(new MtmUpdateCoreTemplate(Model.Fragment(target)));
+                        @:}
+}
+                    }
+                }
+                if (deleteList_@(Model.NavName).Count != 0) {
+                    for (int i = 0; i @("<") deleteList_@(Model.NavName).Count; i++) {
+                        var mtm = deleteList_@(Model.NavName)[i];
+@foreach (var target in Model.Others)
+{
+                        @:{
+    Write(new MtmRemoveCoreTemplate(Model.Fragment(target)));
+                        @:}
+}
+                    }
+                }

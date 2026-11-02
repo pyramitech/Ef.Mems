@@ -1,0 +1,254 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.EntityModel>
+@using Ef.Mems.SourceGenerators
+        public async Task<@(Model.Name)ReadOnly> Update(@Model.EntityType item@(Model.ContextParam))
+        {
+@if (Model.CopyOnInsert)
+{
+            @:item = __Clone(item);
+}
+@foreach (var ext in Model.Extensions)
+{
+    if (ext.HasBeforeUpdate)
+    {
+            @:@(ext.Type).BeforeUpdate(_store, item@(ext.ValuesArg)@(ext.ContextArg));
+    }
+}
+            using var ctx = _store.GetContext();
+            using var upgradeableReaderKey = await _rwl.UpgradeableReaderLockAsync();
+            EntityEntry<@Model.EntityType> entry = null;
+            #pragma warning disable CS0618
+            var originalRo = GetBy@(Model.UpdateKey)(item.@(Model.UpdateKey));
+            if (originalRo == null) throw new EntityNotCachedException("@Model.Name with @Model.UpdateKey " + item.@(Model.UpdateKey) + " is not in the cache - it may have been deleted or never created");
+            var original = originalRo.__GetRawEntity();
+            #pragma warning restore CS0618
+@{ Write(new ScalarDiffTemplate(new ScalarDiffModel { Entity = Model, IsCommit = false })); }
+
+            int newAdded;
+@foreach (var nav in Model.ManyNavs)
+{
+    Write(new NavDiffTemplate(new NavDiffModel { Nav = nav, AttachTarget = "item" }));
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+            @:var addList_@(mtm.NavName) = new List<@mtm.ChildType>();
+            @:var updateList_@(mtm.NavName) = new List<@mtm.ChildType>();
+            @:var deleteList_@(mtm.NavName) = new List<@mtm.ChildType>();
+    Write(new MtmDiffTemplate(new MtmDiffModel { Mtm = mtm, AddList = "addList_" + mtm.NavName }));
+}
+            using (await _rwl.UpgradeToWriterLockAsync(upgradeableReaderKey)) {
+                await ctx.SaveChangesAsync();
+                var ro2 = new @(Model.Name)ReadOnly(item@(Model.RoCtorExtraArg));
+@if (Model.SeqIndex != null)
+{
+                @:_seq_@(Model.SeqIndex.Name)[item.@(Model.SeqIndex.Name)] = ro2;
+}
+@foreach (var idx in Model.Indexes)
+{
+                @:if (@idx.NotEqual("original", "item")) Snapshot.RemoveItem(ref _idx_@(idx.Name), @idx.KeyFrom("original"));
+                @:Snapshot.SetItem(ref _idx_@(idx.Name), @idx.KeyFrom("item"), ro2);
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+                @:__SortReplace_@(srt.Name)(originalRo, ro2);
+}
+                #pragma warning disable CS0618
+@foreach (var mtm in Model.ManyToManys)
+{
+    Write(new MtmApplyTemplate(mtm));
+}
+                #pragma warning restore CS0618
+                return ro2;
+            }
+        }
+
+        public async Task<List<@(Model.Name)ReadOnly>> UpdateRange(ICollection<@Model.EntityType> items@(Model.ContextParam))
+        {
+@if (Model.CopyOnInsert)
+{
+            @:items = items.Select(__Clone).ToList();
+}
+            using var ctx = _store.GetContext();
+            using var upgradeableReaderKey = await _rwl.UpgradeableReaderLockAsync();
+@foreach (var mtm in Model.ManyToManys)
+{
+            @:var addList_@(mtm.NavName) = new List<@mtm.ChildType>();
+            @:var updateList_@(mtm.NavName) = new List<@mtm.ChildType>();
+            @:var deleteList_@(mtm.NavName) = new List<@mtm.ChildType>();
+}
+            foreach (var item in items) {
+@foreach (var ext in Model.Extensions)
+{
+    if (ext.HasBeforeUpdate)
+    {
+                @:@(ext.Type).BeforeUpdate(_store, item@(ext.ValuesArg)@(ext.ContextArg));
+    }
+}
+                EntityEntry<@Model.EntityType> entry = null;
+                #pragma warning disable CS0618
+                var originalRo = GetBy@(Model.UpdateKey)(item.@(Model.UpdateKey));
+                if (originalRo == null) throw new EntityNotCachedException("@Model.Name with @Model.UpdateKey " + item.@(Model.UpdateKey) + " is not in the cache - it may have been deleted or never created");
+                var original = originalRo.__GetRawEntity();
+                #pragma warning restore CS0618
+@{ Write(new ScalarDiffTemplate(new ScalarDiffModel { Entity = Model, IsCommit = false })); }
+
+                int newAdded;
+@foreach (var nav in Model.ManyNavs)
+{
+    Write(new NavDiffTemplate(new NavDiffModel { Nav = nav, AttachTarget = "item" }));
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+    Write(new MtmDiffTemplate(new MtmDiffModel { Mtm = mtm, AddList = "addList_" + mtm.NavName }));
+}
+            }
+            using (await _rwl.UpgradeToWriterLockAsync(upgradeableReaderKey)) {
+                await ctx.SaveChangesAsync();
+                var roList = new List<@(Model.Name)ReadOnly>(items.Count);
+                #pragma warning disable CS0618
+                foreach (var item in items) {
+                    var ro2 = new @(Model.Name)ReadOnly(item@(Model.RoCtorExtraArg));
+                    roList.Add(ro2);
+@if (Model.Indexes.Count != 0 || Model.HasMaterializedSorts)
+{
+                    @:var prevRo = GetBy@(Model.UpdateKey)(item.@(Model.UpdateKey));
+}
+@if (Model.Indexes.Count != 0)
+{
+                    @:var prevRaw = prevRo?.__GetRawEntity();
+}
+@if (Model.SeqIndex != null)
+{
+                    @:_seq_@(Model.SeqIndex.Name)[item.@(Model.SeqIndex.Name)] = ro2;
+}
+@foreach (var idx in Model.Indexes)
+{
+                    @:if (prevRaw != null && (@idx.NotEqual("prevRaw", "item"))) Snapshot.RemoveItem(ref _idx_@(idx.Name), @idx.KeyFrom("prevRaw"));
+                    @:Snapshot.SetItem(ref _idx_@(idx.Name), @idx.KeyFrom("item"), ro2);
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+                    @:__SortReplace_@(srt.Name)(prevRo, ro2);
+}
+                }
+@foreach (var mtm in Model.ManyToManys)
+{
+    Write(new MtmApplyTemplate(mtm));
+}
+                #pragma warning restore CS0618
+                return roList;
+            }
+        }
+
+        public void StageUpdate(EntityTransaction trx, ICollection<@Model.EntityType> items)
+        {
+@if (Model.CopyOnStage)
+{
+            @:trx.StageUpdate(this, (ICollection<@Model.EntityType>)items.Select(__Clone).ToList());
+}
+else
+{
+            @:trx.StageUpdate(this, items);
+}
+        }
+
+        public void StageUpdate(EntityTransaction trx, @Model.EntityType item)
+        {
+@if (Model.CopyOnStage)
+{
+            @:trx.StageUpdate(this, __Clone(item));
+}
+else
+{
+            @:trx.StageUpdate(this, item);
+}
+        }
+
+        // Staged-update section of CommitTransaction; runs under the store's
+        // writer lock, held by the caller.
+        private void __CommitUpdateDiffs(DbContext ctx, ICollection<object> items, EntityTransaction.TransactionUpdateInterals internals, object context)
+        {
+@foreach (var mtm in Model.ManyToManys)
+{
+            @:var updateList_@(mtm.NavName) = new List<@mtm.ChildType>();
+            @:var deleteList_@(mtm.NavName) = new List<@mtm.ChildType>();
+}
+            foreach (var itemObj in items) {
+                var item = itemObj as @Model.EntityType;
+@foreach (var ext in Model.Extensions)
+{
+    if (ext.HasBeforeUpdate)
+    {
+                @:@(ext.Type).BeforeUpdate(_store, item@(ext.ValuesArg)@(ext.ContextArg));
+    }
+}
+                EntityEntry<@Model.EntityType> entry = null;
+                #pragma warning disable CS0618
+                var originalRo = GetBy@(Model.UpdateKey)(item.@(Model.UpdateKey));
+                if (originalRo == null) throw new EntityNotCachedException("@Model.Name with @Model.UpdateKey " + item.@(Model.UpdateKey) + " is not in the cache - it may have been deleted or never created");
+                var original = originalRo.__GetRawEntity();
+                #pragma warning restore CS0618
+                var updateEntity = new @(Model.EntityType)();
+@if (Model.SeqIndexes.Count != 0)
+{
+                @:updateEntity.@(Model.SeqIndexes[0].Name) = item.@(Model.SeqIndexes[0].Name);
+}
+@foreach (var member in Model.IndexMemberProps)
+{
+                @:updateEntity.@(member.Name) = item.@(member.Name);
+}
+@foreach (var nav in Model.ManyNavs)
+{
+                @:updateEntity.@(nav.Nav) = item.@(nav.Nav);
+}
+@{ Write(new ScalarDiffTemplate(new ScalarDiffModel { Entity = Model, IsCommit = true })); }
+
+                int newAdded;
+@foreach (var nav in Model.ManyNavs)
+{
+    Write(new NavDiffTemplate(new NavDiffModel { Nav = nav, AttachTarget = "updateEntity" }));
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+    Write(new MtmDiffTemplate(new MtmDiffModel { Mtm = mtm, AddList = "updateList_" + mtm.NavName }));
+}
+            }
+@foreach (var mtm in Model.ManyToManys)
+{
+                @:if (updateList_@(mtm.NavName).Count != 0) {
+                    @:internals.InsertCreateOrUpdate(typeof(@mtm.ChildType), updateList_@(mtm.NavName), EntityCommitFunctions.CreateOrUpdate@(mtm.NormTypeName));
+                @:}
+                @:if (deleteList_@(mtm.NavName).Count != 0) {
+                    @:internals.InsertDelete(typeof(@mtm.ChildType), deleteList_@(mtm.NavName), EntityCommitFunctions.Delete@(mtm.NormTypeName));
+                @:}
+}
+                #pragma warning disable CS0618
+                internals.ContinueWith.Add(() => {
+                    foreach (var itemObj in items) {
+                        var item = itemObj as @Model.EntityType;
+                        var ro2 = new @(Model.Name)ReadOnly(item@(Model.RoCtorExtraArg));
+@if (Model.Indexes.Count != 0 || Model.HasMaterializedSorts)
+{
+                        @:var prevRo = GetBy@(Model.UpdateKey)(item.@(Model.UpdateKey));
+}
+@if (Model.Indexes.Count != 0)
+{
+                        @:var prevRaw = prevRo?.__GetRawEntity();
+}
+@if (Model.SeqIndex != null)
+{
+                        @:_seq_@(Model.SeqIndex.Name)[item.@(Model.SeqIndex.Name)] = ro2;
+}
+@foreach (var idx in Model.Indexes)
+{
+                        @:if (prevRaw != null && (@idx.NotEqual("prevRaw", "item"))) Snapshot.RemoveItem(ref _idx_@(idx.Name), @idx.KeyFrom("prevRaw"));
+                        @:Snapshot.SetItem(ref _idx_@(idx.Name), @idx.KeyFrom("item"), ro2);
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+                        @:__SortReplace_@(srt.Name)(prevRo, ro2);
+}
+                    }
+                });
+                #pragma warning restore CS0618
+        }
+

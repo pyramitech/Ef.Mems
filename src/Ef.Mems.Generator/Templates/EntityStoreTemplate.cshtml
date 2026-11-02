@@ -1,0 +1,401 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.EntityModel>
+@using Ef.Mems.SourceGenerators
+@{
+    // Sequential-index sources are ordered by the seq key, so their query
+    // wrappers expose "descending" (walk the snapshot back to front).
+    var descParam = Model.SeqIndex != null ? ", bool descending = false" : "";
+    var descArg = Model.SeqIndex != null ? ", descending" : "";
+}
+    public sealed partial class @(Model.Name)EntityStore : EntityStore<@Model.EntityType>
+    {
+        private readonly @Model.Store.StoreType _store;
+@foreach (var seq in Model.SeqIndexes)
+{
+        @:private @(Model.Name)ReadOnly[] _seq_@(seq.Name);
+        @:private int _seqLen_@(seq.Name);
+}
+@foreach (var idx in Model.Indexes)
+{
+        @:private Dictionary<@idx.Type, @(Model.Name)ReadOnly> _idx_@(idx.Name);
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+        @:private @(Model.Name)ReadOnly[] _sort_@(srt.Name);
+}
+        public int Count { get; set; }
+
+        public async Task Refresh()
+        {
+            using var ctx = _store.GetContext();
+            var query = ctx.Set<@Model.EntityType>().AsQueryable().AsSplitQuery().AsNoTracking();
+@if (Model.CachesAllProperties)
+{
+    foreach (var nav in Model.ManyNavs)
+    {
+            @:query = query.Include(e => e.@(nav.Nav));
+    }
+    foreach (var mtm in Model.ManyToManys)
+    {
+            @:query = query.Include(e => e.@(mtm.NavName));
+    }
+}
+else
+{
+            @:// Partial cache: project only the cached columns (plus index
+            @:// keys) and the declared navigations instead of loading full rows.
+            @:query = query.Select(e => new @Model.EntityType
+            @:{
+    foreach (var p in Model.ProjectionProps)
+    {
+            @:    @(p.Name) = e.@(p.Name),
+    }
+    foreach (var nav in Model.ManyNavs)
+    {
+            @:    @(nav.Nav) = e.@(nav.Nav).ToList(),
+    }
+    foreach (var mtm in Model.ManyToManys)
+    {
+            @:    @(mtm.NavName) = e.@(mtm.NavName).ToList(),
+    }
+    foreach (var o in Model.Owneds)
+    {
+            @:    @(o.Name) = e.@(o.Name),
+    }
+            @:});
+}
+            using (await _rwl.WriterLockAsync()) {
+                var all = await query.ToListAsync();
+                this.Count = all.Count;
+@foreach (var seq in Model.SeqIndexes)
+{
+                @:var max_@(seq.Name) = (all.Count == 0 ? 0 : all.Max(x => x.@(seq.Name))) + 1;
+                @:var seq_@(seq.Name) = new @(Model.Name)ReadOnly[max_@(seq.Name)];
+}
+@foreach (var idx in Model.Indexes)
+{
+    if (idx.Type == "string")
+    {
+                @:var idx_@(idx.Name) = new Dictionary<@idx.Type, @(Model.Name)ReadOnly>(all.Count, StringComparer.Ordinal);
+    }
+    else
+    {
+                @:var idx_@(idx.Name) = new Dictionary<@idx.Type, @(Model.Name)ReadOnly>(all.Count);
+    }
+}
+@if (Model.HasMaterializedSorts)
+{
+                @:var roBuffer = new List<@(Model.Name)ReadOnly>(all.Count);
+}
+                foreach (var e in all) {
+                    var ro = new @(Model.Name)ReadOnly(e@(Model.RoCtorExtraArg));
+@if (Model.HasMaterializedSorts)
+{
+                    @:roBuffer.Add(ro);
+}
+@foreach (var seq in Model.SeqIndexes)
+{
+                    @:seq_@(seq.Name)[e.@(seq.Name)] = ro;
+}
+@foreach (var idx in Model.Indexes)
+{
+                    @:idx_@(idx.Name)[@idx.KeyFrom("e")] = ro;
+}
+                }
+@foreach (var srt in Model.MaterializedSorts)
+{
+                @:var sort_@(srt.Name) = roBuffer.ToArray();
+                @:Array.Sort(sort_@(srt.Name), static (a, b) => Comparer<@srt.Prop.Type>.Default.Compare(a.@(srt.Prop.Name), b.@(srt.Prop.Name)));
+                @:Volatile.Write(ref _sort_@(srt.Name), sort_@(srt.Name));
+}
+@foreach (var seq in Model.SeqIndexes)
+{
+                @:Volatile.Write(ref _seq_@(seq.Name), seq_@(seq.Name));
+                @:_seqLen_@(seq.Name) = max_@(seq.Name);
+}
+@foreach (var idx in Model.Indexes)
+{
+                @:Volatile.Write(ref _idx_@(idx.Name), idx_@(idx.Name));
+}
+            }
+        }
+
+        internal @(Model.Name)EntityStore(@Model.Store.StoreType store)
+        {
+            _store = store;
+            Refresh().ConfigureAwait(false).GetAwaiter().GetResult();
+        }
+
+@foreach (var seq in Model.SeqIndexes)
+{
+        @:public @(Model.Name)ReadOnly GetBy@(seq.Name)(@seq.Type key) { var seq = Volatile.Read(ref _seq_@(seq.Name)); return key >= 0 && key < seq.Length ? seq[key] : null; }
+}
+@foreach (var idx in Model.Indexes)
+{
+        @:public @(Model.Name)ReadOnly GetBy@(idx.Name)(@idx.GetByParams) => Volatile.Read(ref _idx_@(idx.Name)).TryGetValue(@idx.GetByKey, out var v) ? v : null;
+}
+@if (Model.SeqIndex != null && Model.SeqIndexGuard)
+{
+
+        @:// Compares against the sequence high-water mark (not Count): with
+        @:// create/delete churn ids grow while Count stays flat, and that is
+        @:// legitimate - only ids far beyond the sequence are anomalous.
+        @:private void __GuardSequentialIndex(long id)
+        @:{
+        @:    if (id > 1024L + (long)_seqLen_@(Model.SeqIndex.Name) * 4L)
+        @:        throw new SparseSequentialIndexException("@Model.Name sequential index value " + id + " is far beyond the sequence high-water mark " + _seqLen_@(Model.SeqIndex.Name) + " - UseSequentialIndex assumes dense sequential keys (disable via UseSafety(sequentialIndexGuard: false))");
+        @:}
+}
+@if (Model.NeedsClone)
+{
+
+        @:// Safety clone (UseSafety copyOnInsert/copyOnStage): entities enter
+        @:// the cache as private copies, so callers may keep mutating theirs.
+        @:private static @Model.EntityType __Clone(@Model.EntityType source)
+        @:{
+        @:    return new @Model.EntityType
+        @:    {
+    foreach (var p in Model.CloneProps)
+    {
+        @:        @p.Name = @(p.CloneExpr("source")),
+    }
+    foreach (var nav in Model.ManyNavs)
+    {
+        @:        @(nav.Nav) = source.@(nav.Nav)?.Select(c => new @nav.ChildType { @nav.CloneInit }).ToList(),
+    }
+    foreach (var mtm in Model.ManyToManys)
+    {
+        @:        @(mtm.NavName) = source.@(mtm.NavName)?.Select(c => new @mtm.ChildType { @mtm.CloneInit }).ToList(),
+    }
+    foreach (var o in Model.Owneds)
+    {
+        @:        @(o.Name) = @(o.CloneExpr("source")),
+    }
+        @:    };
+        @:}
+}
+
+        // One commit per transaction and store: creates, updates and deletes
+        // are applied under a single writer-lock hold (parked at the gate
+        // until the transaction saves and publishes), so mixing operation
+        // kinds on this store cannot deadlock on its own lock.
+        public override async Task CommitTransaction(Promise gate, DbContext ctx, ICollection<object> creates, ICollection<object> updates, ICollection<object> deletes, TaskCompletionSource ready, EntityTransaction.TransactionUpdateInterals internals, object context)
+        {
+            var gateConsumed = false;
+            try
+            {
+                __GuardDuplicateStaging(creates, updates, deletes);
+                using (await _rwl.WriterLockAsync())
+                {
+@if (Model.CanCreate)
+{
+                    @:if (creates.Count != 0) __CommitCreates(ctx, creates, internals, context);
+}
+else
+{
+                    @:if (creates.Count != 0) throw new NotSupportedException("@Model.Name store was built without create support (UseFeatures)");
+}
+@if (Model.CanUpdate)
+{
+                    @:if (updates.Count != 0) __CommitUpdateDiffs(ctx, updates, internals, context);
+}
+else
+{
+                    @:if (updates.Count != 0) throw new NotSupportedException("@Model.Name store was built without update support (UseFeatures)");
+}
+@if (Model.CanDelete)
+{
+                    @:if (deletes.Count != 0) __CommitDeletes(ctx, deletes, internals, context);
+}
+else
+{
+                    @:if (deletes.Count != 0) throw new NotSupportedException("@Model.Name store was built without delete support (UseFeatures)");
+}
+                    ready.TrySetResult();
+                    gateConsumed = true;
+                    await gate;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Signal the transaction and consume the gate exactly once,
+                // so a faulting commit can neither hang Commit() nor leak an
+                // unobserved promise.
+                ready.TrySetException(ex);
+                if (!gateConsumed) { try { await gate; } catch { } }
+                throw;
+            }
+        }
+
+        // An entity may be staged at most once per transaction, in exactly
+        // one operation. Creates without an assigned key are exempt (their
+        // key is generated during the commit).
+        private void __GuardDuplicateStaging(ICollection<object> creates, ICollection<object> updates, ICollection<object> deletes)
+        {
+            var keys = new HashSet<@(Model.UpdateKeyType)>();
+            void Check(ICollection<object> staged, bool allowDefaultKey)
+            {
+                foreach (var obj in staged)
+                {
+                    var key = (obj as @(Model.EntityType)).@(Model.UpdateKey);
+                    if (allowDefaultKey && EqualityComparer<@(Model.UpdateKeyType)>.Default.Equals(key, default)) continue;
+                    if (!keys.Add(key)) throw new DuplicateStagedEntityException("@Model.Name with @Model.UpdateKey " + key + " is staged more than once in this transaction - an entity may appear at most once per transaction");
+                }
+            }
+            Check(creates, allowDefaultKey: true);
+            Check(updates, allowDefaultKey: false);
+            Check(deletes, allowDefaultKey: false);
+        }
+
+        public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QuerySortCount<TKey>(Predicate<@(Model.Name)ReadOnly> predicate, int skip, int take, Func<@(Model.Name)ReadOnly, TKey> keySelector, IComparer<TKey> keyComparer = null, bool descending = false)
+        => base.QuerySortCount(@Model.QuerySource, predicate, keySelector, skip, take, keyComparer, descending);
+        public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QueryCount(Predicate<@(Model.Name)ReadOnly> predicate, int skip, int take@(descParam))
+        => base.QueryCount(@Model.QuerySource, predicate, skip, take@(descArg));
+        public ValueTask<List<@(Model.Name)ReadOnly>> Query(Predicate<@(Model.Name)ReadOnly> predicate, int skip, int take@(descParam))
+        => base.Query(@Model.QuerySource, predicate, skip, take@(descArg));
+        public ValueTask<List<@(Model.Name)ReadOnly>> Query(Predicate<@(Model.Name)ReadOnly> predicate)
+        => base.Query(@Model.QuerySource, predicate);
+        public ValueTask<List<@(Model.Name)ReadOnly>> Query(int skip, int take@(descParam))
+        => base.Query(@Model.QuerySource, skip, take@(descArg));
+        public ValueTask<List<@(Model.Name)ReadOnly>> GetAll()
+        => base.Query(@Model.QuerySource);
+        public ValueTask<@(Model.Name)ReadOnly> FirstOrDefault(Predicate<@(Model.Name)ReadOnly> predicate@(descParam))
+        => base.FirstOrDefault(@Model.QuerySource, predicate@(descArg));
+
+        public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QuerySortCount<TKey, TPred>(TPred predicate, int skip, int take, Func<@(Model.Name)ReadOnly, TKey> keySelector, IComparer<TKey> keyComparer = null, bool descending = false) where TPred : struct, IPredicate<@(Model.Name)ReadOnly>
+        => base.QuerySortCount(@Model.QuerySource, predicate, keySelector, skip, take, keyComparer, descending);
+        public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QueryCount<TPred>(TPred predicate, int skip, int take@(descParam)) where TPred : struct, IPredicate<@(Model.Name)ReadOnly>
+        => base.QueryCount(@Model.QuerySource, predicate, skip, take@(descArg));
+        public ValueTask<List<@(Model.Name)ReadOnly>> Query<TPred>(TPred predicate, int skip, int take@(descParam)) where TPred : struct, IPredicate<@(Model.Name)ReadOnly>
+        => base.Query(@Model.QuerySource, predicate, skip, take@(descArg));
+        public ValueTask<List<@(Model.Name)ReadOnly>> Query<TPred>(TPred predicate) where TPred : struct, IPredicate<@(Model.Name)ReadOnly>
+        => base.Query(@Model.QuerySource, predicate);
+        public ValueTask<@(Model.Name)ReadOnly> FirstOrDefault<TPred>(TPred predicate@(descParam)) where TPred : struct, IPredicate<@(Model.Name)ReadOnly>
+        => base.FirstOrDefault(@Model.QuerySource, predicate@(descArg));
+        public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QuerySortCount<TKey, TPred, TSel, TCmp>(TPred predicate, TSel keySelector, TCmp keyComparer, int skip, int take, bool descending = false) where TPred : struct, IPredicate<@(Model.Name)ReadOnly> where TSel : struct, IKeySelector<@(Model.Name)ReadOnly, TKey> where TCmp : struct, IComparer<TKey>
+        => base.QuerySortCount<@(Model.Name)ReadOnly, TKey, TPred, TSel, TCmp>(@Model.QuerySource, predicate, keySelector, keyComparer, skip, take, descending);
+
+@foreach (var pred in Model.Predicates)
+{
+
+        @:public readonly struct @pred.StructName : IPredicate<@(Model.Name)ReadOnly>
+        @:{
+    foreach (var arg in pred.Args)
+    {
+            @:public readonly @arg.Type @arg.Name;
+    }
+    if (pred.Args.Count != 0)
+    {
+            @:public @(pred.StructName)(@pred.ParamList)
+            @:{
+        foreach (var arg in pred.Args)
+        {
+                @:this.@(arg.Name) = @arg.Name;
+        }
+            @:}
+    }
+            @:[MethodImpl(MethodImplOptions.AggressiveInlining)]
+            @:public bool Invoke(@(Model.Name)ReadOnly @pred.EntityParam) => @pred.Body;
+        @:}
+        @:public ValueTask<List<@(Model.Name)ReadOnly>> Query@(pred.Name)(@(pred.ParamListLeading)int skip, int take@(descParam))
+        @:=> base.Query(@Model.QuerySource, new @(pred.StructName)(@pred.ArgNames), skip, take@(descArg));
+        @:public ValueTask<List<@(Model.Name)ReadOnly>> Query@(pred.Name)(@pred.ParamList)
+        @:=> base.Query(@Model.QuerySource, new @(pred.StructName)(@pred.ArgNames));
+        @:public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QueryCount@(pred.Name)(@(pred.ParamListLeading)int skip, int take@(descParam))
+        @:=> base.QueryCount(@Model.QuerySource, new @(pred.StructName)(@pred.ArgNames), skip, take@(descArg));
+        @:public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QuerySortCount@(pred.Name)<TKey>(@(pred.ParamListLeading)int skip, int take, Func<@(Model.Name)ReadOnly, TKey> keySelector, IComparer<TKey> keyComparer = null, bool descending = false)
+        @:=> base.QuerySortCount(@Model.QuerySource, new @(pred.StructName)(@pred.ArgNames), keySelector, skip, take, keyComparer, descending);
+    var fodDesc = pred.Args.Count != 0 ? descParam : descParam.TrimStart(',', ' ');
+        @:public ValueTask<@(Model.Name)ReadOnly> FirstOrDefault@(pred.Name)(@pred.ParamList@(fodDesc))
+        @:=> base.FirstOrDefault(@Model.QuerySource, new @(pred.StructName)(@pred.ArgNames)@(descArg));
+}
+
+@foreach (var srt in Model.Sorts)
+{
+
+        @:public readonly struct @(srt.SelectorStruct) : IKeySelector<@(Model.Name)ReadOnly, @srt.Prop.Type>
+        @:{
+        @:    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        @:    public @srt.Prop.Type Key(@(Model.Name)ReadOnly item) => item.@(srt.Prop.Name);
+        @:}
+    if (srt.Materialized)
+    {
+        @:// MatchCount forces visiting every element, where the sorted
+        @:// array cannot help (and is cache-hostile to walk) - the count
+        @:// variants always use the specialized scan engine.
+        @:public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QuerySortCount@(srt.Name)(Predicate<@(Model.Name)ReadOnly> predicate, int skip, int take, bool descending = false)
+        @:=> base.QuerySortCount<@(Model.Name)ReadOnly, @srt.Prop.Type, @(srt.SelectorStruct), KeyComparer<@srt.Prop.Type>>(@Model.QuerySource, predicate, new @(srt.SelectorStruct)(), default, skip, take, descending);
+        @:public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QuerySortCount@(srt.Name)<TPred>(TPred predicate, int skip, int take, bool descending = false) where TPred : struct, IPredicate<@(Model.Name)ReadOnly>
+        @:=> base.QuerySortCount<@(Model.Name)ReadOnly, @srt.Prop.Type, TPred, @(srt.SelectorStruct), KeyComparer<@srt.Prop.Type>>(@Model.QuerySource, predicate, new @(srt.SelectorStruct)(), default, skip, take, descending);
+        @:public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QuerySortCount@(srt.Name)(int skip, int take, bool descending = false)
+        @:=> base.QuerySortCount<@(Model.Name)ReadOnly, @srt.Prop.Type, MatchAll<@(Model.Name)ReadOnly>, @(srt.SelectorStruct), KeyComparer<@srt.Prop.Type>>(@Model.QuerySource, new MatchAll<@(Model.Name)ReadOnly>(), new @(srt.SelectorStruct)(), default, skip, take, descending);
+        @:// no-count variants early-exit once the window is filled
+        @:public ValueTask<List<@(Model.Name)ReadOnly>> QuerySort@(srt.Name)(Predicate<@(Model.Name)ReadOnly> predicate, int skip, int take, bool descending = false)
+        @:=> base.SortedQuery(Volatile.Read(ref _sort_@(srt.Name)), predicate, skip, take, descending);
+        @:public ValueTask<List<@(Model.Name)ReadOnly>> QuerySort@(srt.Name)<TPred>(TPred predicate, int skip, int take, bool descending = false) where TPred : struct, IPredicate<@(Model.Name)ReadOnly>
+        @:=> base.SortedQuery(Volatile.Read(ref _sort_@(srt.Name)), predicate, skip, take, descending);
+        @:public ValueTask<List<@(Model.Name)ReadOnly>> QuerySort@(srt.Name)(int skip, int take, bool descending = false)
+        @:=> base.SortedQuery(Volatile.Read(ref _sort_@(srt.Name)), new MatchAll<@(Model.Name)ReadOnly>(), skip, take, descending);
+
+        @:private void __SortInsert_@(srt.Name)(@(Model.Name)ReadOnly ro)
+        @:{
+        @:    var arr = _sort_@(srt.Name);
+        @:    var key = ro.@(srt.Prop.Name);
+        @:    int lo = 0, hi = arr.Length;
+        @:    while (lo @("<") hi) { int mid = (lo + hi) >> 1; if (Comparer<@srt.Prop.Type>.Default.Compare(arr[mid].@(srt.Prop.Name), key) <= 0) lo = mid + 1; else hi = mid; }
+        @:    var next = new @(Model.Name)ReadOnly[arr.Length + 1];
+        @:    Array.Copy(arr, next, lo);
+        @:    next[lo] = ro;
+        @:    Array.Copy(arr, lo, next, lo + 1, arr.Length - lo);
+        @:    Volatile.Write(ref _sort_@(srt.Name), next);
+        @:}
+        @:private void __SortRemove_@(srt.Name)(@(Model.Name)ReadOnly ro)
+        @:{
+        @:    var arr = _sort_@(srt.Name);
+        @:    int i = Array.IndexOf(arr, ro);
+        @:    if (i @("<") 0) return;
+        @:    var next = new @(Model.Name)ReadOnly[arr.Length - 1];
+        @:    Array.Copy(arr, next, i);
+        @:    Array.Copy(arr, i + 1, next, i, arr.Length - i - 1);
+        @:    Volatile.Write(ref _sort_@(srt.Name), next);
+        @:}
+        @:private void __SortReplace_@(srt.Name)(@(Model.Name)ReadOnly oldRo, @(Model.Name)ReadOnly newRo)
+        @:{
+        @:    if (oldRo == null) { __SortInsert_@(srt.Name)(newRo); return; }
+        @:    var arr = _sort_@(srt.Name);
+        @:    int i = Array.IndexOf(arr, oldRo);
+        @:    if (i @("<") 0) { __SortInsert_@(srt.Name)(newRo); return; }
+        @:    if (Comparer<@srt.Prop.Type>.Default.Compare(oldRo.@(srt.Prop.Name), newRo.@(srt.Prop.Name)) == 0) { arr[i] = newRo; return; }
+        @:    __SortRemove_@(srt.Name)(oldRo);
+        @:    __SortInsert_@(srt.Name)(newRo);
+        @:}
+    }
+    else
+    {
+        @:public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QuerySortCount@(srt.Name)(Predicate<@(Model.Name)ReadOnly> predicate, int skip, int take, bool descending = false)
+        @:=> base.QuerySortCount<@(Model.Name)ReadOnly, @srt.Prop.Type, @(srt.SelectorStruct), KeyComparer<@srt.Prop.Type>>(@Model.QuerySource, predicate, new @(srt.SelectorStruct)(), default, skip, take, descending);
+        @:public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QuerySortCount@(srt.Name)<TPred>(TPred predicate, int skip, int take, bool descending = false) where TPred : struct, IPredicate<@(Model.Name)ReadOnly>
+        @:=> base.QuerySortCount<@(Model.Name)ReadOnly, @srt.Prop.Type, TPred, @(srt.SelectorStruct), KeyComparer<@srt.Prop.Type>>(@Model.QuerySource, predicate, new @(srt.SelectorStruct)(), default, skip, take, descending);
+        @:public ValueTask<(List<@(Model.Name)ReadOnly> Items, int MatchCount)> QuerySortCount@(srt.Name)(int skip, int take, bool descending = false)
+        @:=> base.QuerySortCount<@(Model.Name)ReadOnly, @srt.Prop.Type, MatchAll<@(Model.Name)ReadOnly>, @(srt.SelectorStruct), KeyComparer<@srt.Prop.Type>>(@Model.QuerySource, new MatchAll<@(Model.Name)ReadOnly>(), new @(srt.SelectorStruct)(), default, skip, take, descending);
+        @:public async ValueTask<List<@(Model.Name)ReadOnly>> QuerySort@(srt.Name)(Predicate<@(Model.Name)ReadOnly> predicate, int skip, int take, bool descending = false)
+        @:=> (await QuerySortCount@(srt.Name)(predicate, skip, take, descending)).Items;
+        @:public async ValueTask<List<@(Model.Name)ReadOnly>> QuerySort@(srt.Name)<TPred>(TPred predicate, int skip, int take, bool descending = false) where TPred : struct, IPredicate<@(Model.Name)ReadOnly>
+        @:=> (await QuerySortCount@(srt.Name)(predicate, skip, take, descending)).Items;
+        @:public async ValueTask<List<@(Model.Name)ReadOnly>> QuerySort@(srt.Name)(int skip, int take, bool descending = false)
+        @:=> (await QuerySortCount@(srt.Name)(skip, take, descending)).Items;
+    }
+}
+
+@if (Model.CanCreate)
+{
+    Write(new CreateSectionTemplate(Model));
+}
+@if (Model.CanUpdate)
+{
+    Write(new UpdateSectionTemplate(Model));
+}
+@if (Model.CanDelete)
+{
+    Write(new DeleteSectionTemplate(Model));
+}
+    }

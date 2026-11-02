@@ -1,0 +1,42 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.NavDiffModel>
+@using Ef.Mems.SourceGenerators
+@{ var nav = Model.Nav; }
+            // A null navigation means "no children": normalize the incoming
+            // list (as Create does) and read the cached original null-safely.
+            if (item.@(nav.Nav) == null) item.@(nav.Nav) = new List<@nav.ChildType>();
+            var __orig_@(nav.Nav) = original.@(nav.Nav) ?? new List<@nav.ChildType>();
+            newAdded = 0;
+            for (int i = 0; i @("<") item.@(nav.Nav).Count; i++) {
+                var subItem = item.@(nav.Nav)[i];
+                EntityEntry<@nav.ChildType> subEntry = null;
+                var subOriginal = __orig_@(nav.Nav).FirstOrDefault(x => @nav.KeysEqual("subItem"));
+                if (subOriginal == null) {
+                    ++newAdded;
+                    if (entry == null) {
+                        entry = ctx.EnsureAttached(@Model.AttachTarget);
+                    }
+                    ctx.Entry(subItem).State = EntityState.Added;
+                } else {
+@foreach (var p in nav.ChildProps)
+{
+    if (nav.KeyProps.Contains(p.Name))
+    {
+        continue;
+    }
+                    @:if (@p.NotEqual("subOriginal", "subItem")) {
+                        @:if (subEntry == null) {
+                            @:subEntry = ctx.EnsureAttached(subItem);
+                        @:}
+                        @:subEntry.Property(x => x.@(p.Name)).IsModified = true;
+                    @:}
+}
+                }
+            }
+            if (__orig_@(nav.Nav).Count + newAdded != item.@(nav.Nav).Count) {
+                for (int i = 0; i @("<") __orig_@(nav.Nav).Count; i++) {
+                    var subItem = __orig_@(nav.Nav)[i];
+                    if (item.@(nav.Nav).All(x => @nav.KeysNotEqual("subItem"))) {
+                        ctx.Entry(subItem).State = EntityState.Deleted;
+                    }
+                }
+            }

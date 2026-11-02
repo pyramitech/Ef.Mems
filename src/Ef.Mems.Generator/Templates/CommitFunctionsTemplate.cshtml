@@ -1,0 +1,36 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.MtmJoinModel>
+@using Ef.Mems.SourceGenerators
+        public static void CreateOrUpdate@(Model.NormTypeName)(object store, object mtmList) {
+            var _store = store as @Model.StoreType;
+            var mtms = mtmList as List<@Model.ChildType>;
+            HashSet<@Model.KeyTupleTypes> seen = new(capacity: mtms.Count);
+            for (int i = 0; i @("<") mtms.Count; i++) {
+                var mtm = mtms[i];
+                if (!seen.Add(@Model.KeyTupleValues)) {
+                    continue;
+                }
+@foreach (var target in Model.Targets)
+{
+                @:{
+    Write(new MtmUpdateCoreTemplate(Model.Fragment(target, withAddElse: true)));
+                @:}
+}
+            }
+        }
+        public static void Delete@(Model.NormTypeName)(object store, object mtmList) {
+            var _store = store as @Model.StoreType;
+            var mtms = mtmList as List<@Model.ChildType>;
+            HashSet<@Model.KeyTupleTypes> seen = new(capacity: mtms.Count);
+            for (int i = 0; i @("<") mtms.Count; i++) {
+                var mtm = mtms[i];
+                if (!seen.Add(@Model.KeyTupleValues)) {
+                    continue;
+                }
+@foreach (var target in Model.Targets)
+{
+                @:{
+    Write(new MtmRemoveCoreTemplate(Model.Fragment(target)));
+                @:}
+}
+            }
+        }

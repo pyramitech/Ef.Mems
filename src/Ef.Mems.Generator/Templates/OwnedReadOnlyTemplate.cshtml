@@ -1,0 +1,13 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.OwnedModel>
+@using Ef.Mems.SourceGenerators
+    // Read-only view over a cached owned instance (UseOwned): readers can
+    // never mutate cached state through it.
+    public sealed class @Model.WrapperName
+    {
+        private readonly @Model.Type _o;
+        internal @(Model.WrapperName)(@Model.Type o) { _o = o; }
+@foreach (var m in Model.Members)
+{
+        @:public @m.RoType @m.Name => _o.@(m.Name);
+}
+    }

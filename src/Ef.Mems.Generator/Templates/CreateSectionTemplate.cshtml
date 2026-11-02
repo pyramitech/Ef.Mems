@@ -1,0 +1,258 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.EntityModel>
+@using Ef.Mems.SourceGenerators
+        public async Task<@(Model.Name)ReadOnly> Create(@Model.EntityType item@(Model.ContextParam))
+        {
+@if (Model.CopyOnInsert)
+{
+            @:item = __Clone(item);
+}
+@foreach (var ext in Model.Extensions)
+{
+    if (ext.HasBeforeCreate)
+    {
+            @:@(ext.Type).BeforeCreate(_store, item@(ext.ValuesArg)@(ext.ContextArg));
+    }
+}
+            using var ctx = _store.GetContext();
+            using (await _rwl.WriterLockAsync()) {
+@if (Model.SeqIndex != null && Model.SeqIndex.GenerateId)
+{
+                @:item.@(Model.SeqIndex.Name) = _seqLen_@(Model.SeqIndex.Name);
+}
+@foreach (var idx in Model.Indexes)
+{
+    if (idx.GenArg)
+    {
+                @:item.@(idx.Name) = @idx.GenFunc;
+    }
+}
+                ctx.Add(item);
+                await ctx.SaveChangesAsync();
+                var ro = new @(Model.Name)ReadOnly(item@(Model.RoCtorExtraArg));
+@if (Model.SeqIndex != null)
+{
+    if (Model.SeqIndexGuard)
+    {
+                @:__GuardSequentialIndex(item.@(Model.SeqIndex.Name));
+    }
+                @:Snapshot.AddAt(ref _seq_@(Model.SeqIndex.Name), ref _seqLen_@(Model.SeqIndex.Name), ro.@(Model.SeqIndex.Name), ro);
+}
+@foreach (var idx in Model.Indexes)
+{
+                @:Snapshot.SetItem(ref _idx_@(idx.Name), @idx.KeyFrom("item"), ro);
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+                @:__SortInsert_@(srt.Name)(ro);
+}
+                ++this.Count;
+                #pragma warning disable CS0618
+@foreach (var nav in Model.ManyNavs)
+{
+                @:if (item.@(nav.Nav) == null) item.@(nav.Nav) = new();
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+    foreach (var target in mtm.Others)
+    {
+                @:if (item.@(mtm.NavName) == null) item.@(mtm.NavName) = new();
+                @:for (int i = 0; i < item.@(mtm.NavName).Count; i++) {
+                    @:var mtm = item.@(mtm.NavName)[i];
+    Write(new MtmAddCoreTemplate(mtm.Fragment(target)));
+                @:}
+    }
+}
+                #pragma warning restore CS0618
+                return ro;
+            }
+        }
+
+        public async Task<List<@(Model.Name)ReadOnly>> CreateRange(ICollection<@Model.EntityType> items@(Model.ContextParam))
+        {
+@if (Model.CopyOnInsert)
+{
+            @:items = items.Select(__Clone).ToList();
+}
+            using var ctx = _store.GetContext();
+            var roList = new List<@(Model.Name)ReadOnly>(items.Count);
+            using (await _rwl.WriterLockAsync()) {
+@if (Model.SeqIndex != null && Model.SeqIndex.GenerateId)
+{
+                @:var itemIndex = 0;
+}
+                foreach (var item in items) {
+@foreach (var ext in Model.Extensions)
+{
+    if (ext.HasBeforeCreate)
+    {
+                    @:@(ext.Type).BeforeCreate(_store, item@(ext.ValuesArg)@(ext.ContextArg));
+    }
+}
+@if (Model.SeqIndex != null && Model.SeqIndex.GenerateId)
+{
+                    @:item.@(Model.SeqIndex.Name) = _seqLen_@(Model.SeqIndex.Name) + itemIndex++;
+}
+@foreach (var idx in Model.Indexes)
+{
+    if (idx.GenArg)
+    {
+                    @:item.@(idx.Name) = @idx.GenFunc;
+    }
+}
+                    ctx.Add(item);
+                }
+                await ctx.SaveChangesAsync();
+                this.Count += items.Count;
+                #pragma warning disable CS0618
+@foreach (var idx in Model.Indexes)
+{
+                @:var idx_@(idx.Name) = Snapshot.Clone(_idx_@(idx.Name));
+}
+                foreach (var item in items) {
+                    var ro = new @(Model.Name)ReadOnly(item@(Model.RoCtorExtraArg));
+                    roList.Add(ro);
+@if (Model.SeqIndex != null)
+{
+    if (Model.SeqIndexGuard)
+    {
+                    @:__GuardSequentialIndex(item.@(Model.SeqIndex.Name));
+    }
+                    @:Snapshot.AddAt(ref _seq_@(Model.SeqIndex.Name), ref _seqLen_@(Model.SeqIndex.Name), ro.@(Model.SeqIndex.Name), ro);
+}
+@foreach (var idx in Model.Indexes)
+{
+                    @:idx_@(idx.Name)[@idx.KeyFrom("item")] = ro;
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+                    @:__SortInsert_@(srt.Name)(ro);
+}
+@foreach (var nav in Model.ManyNavs)
+{
+                    @:if (item.@(nav.Nav) == null) item.@(nav.Nav) = new();
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+    foreach (var target in mtm.Others)
+    {
+                    @:if (item.@(mtm.NavName) == null) item.@(mtm.NavName) = new();
+                    @:for (int i = 0; i < item.@(mtm.NavName).Count; i++) {
+                        @:var mtm = item.@(mtm.NavName)[i];
+    Write(new MtmAddCoreTemplate(mtm.Fragment(target)));
+                    @:}
+    }
+}
+                }
+@foreach (var idx in Model.Indexes)
+{
+                @:Volatile.Write(ref _idx_@(idx.Name), idx_@(idx.Name));
+}
+                #pragma warning restore CS0618
+            }
+            return roList;
+        }
+
+        public void StageCreate(EntityTransaction trx, ICollection<@Model.EntityType> items)
+        {
+@if (Model.CopyOnStage)
+{
+            @:trx.StageCreate(this, (ICollection<@Model.EntityType>)items.Select(__Clone).ToList());
+}
+else
+{
+            @:trx.StageCreate(this, items);
+}
+        }
+
+        public void StageCreate(EntityTransaction trx, @Model.EntityType item)
+        {
+@if (Model.CopyOnStage)
+{
+            @:trx.StageCreate(this, __Clone(item));
+}
+else
+{
+            @:trx.StageCreate(this, item);
+}
+        }
+
+        // Staged-create section of CommitTransaction; runs under the store's
+        // writer lock, held by the caller.
+        private void __CommitCreates(DbContext ctx, ICollection<object> items, EntityTransaction.TransactionUpdateInterals internals, object context)
+        {
+@if (Model.SeqIndex != null)
+{
+                @:Snapshot.EnsureCapacity(ref _seq_@(Model.SeqIndex.Name), _seqLen_@(Model.SeqIndex.Name) + items.Count);
+}
+@if (Model.SeqIndex != null && Model.SeqIndex.GenerateId)
+{
+                @:var itemIndex = 0;
+}
+                foreach (var itemObj in items) {
+                    var item = itemObj as @Model.EntityType;
+@foreach (var ext in Model.Extensions)
+{
+    if (ext.HasBeforeCreate)
+    {
+                    @:@(ext.Type).BeforeCreate(_store, item@(ext.ValuesArg)@(ext.ContextArg));
+    }
+}
+@if (Model.SeqIndex != null && Model.SeqIndex.GenerateId)
+{
+                    @:item.@(Model.SeqIndex.Name) = _seqLen_@(Model.SeqIndex.Name) + itemIndex++;
+}
+@foreach (var idx in Model.Indexes)
+{
+    if (idx.GenArg)
+    {
+                    @:item.@(idx.Name) = @idx.GenFunc;
+    }
+}
+                    ctx.Add(item);
+@foreach (var nav in Model.ManyNavs)
+{
+                    @:if (item.@(nav.Nav) == null) item.@(nav.Nav) = new();
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+                    @:if (item.@(mtm.NavName) == null) item.@(mtm.NavName) = new();
+                    @:if (item.@(mtm.NavName).Count != 0) {
+                        @:internals.InsertCreateOrUpdate(typeof(@mtm.ChildType), item.@(mtm.NavName), EntityCommitFunctions.CreateOrUpdate@(mtm.NormTypeName));
+                    @:}
+}
+                }
+                internals.ContinueWith.Add(() => {
+                    this.Count += items.Count;
+                    #pragma warning disable CS0618
+@foreach (var idx in Model.Indexes)
+{
+                    @:var idx_@(idx.Name) = Snapshot.Clone(_idx_@(idx.Name));
+}
+                    foreach (var itemObj in items) {
+                        var item = itemObj as @Model.EntityType;
+                        var ro = new @(Model.Name)ReadOnly(item@(Model.RoCtorExtraArg));
+@if (Model.SeqIndex != null)
+{
+    if (Model.SeqIndexGuard)
+    {
+                        @:__GuardSequentialIndex(item.@(Model.SeqIndex.Name));
+    }
+                        @:Snapshot.AddAt(ref _seq_@(Model.SeqIndex.Name), ref _seqLen_@(Model.SeqIndex.Name), ro.@(Model.SeqIndex.Name), ro);
+}
+@foreach (var idx in Model.Indexes)
+{
+                        @:idx_@(idx.Name)[@idx.KeyFrom("item")] = ro;
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+                        @:__SortInsert_@(srt.Name)(ro);
+}
+                    }
+@foreach (var idx in Model.Indexes)
+{
+                    @:Volatile.Write(ref _idx_@(idx.Name), idx_@(idx.Name));
+}
+                    #pragma warning restore CS0618
+                });
+        }
+

@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Ef.Mems</PackageId>
+    <Title>Ef.Mems</Title>
+    <Description>In-memory cache layer for Entity Framework Core for single-writer applications. A Roslyn source generator turns a fluent store declaration into strongly typed cache classes: lock-free snapshot reads, EF Core-backed writes, transactions, indexes, sorts, full-text search, owned types and polymorphic unions.</Description>
+    <PackageTags>entity-framework;efcore;cache;in-memory;source-generator;roslyn;snapshot;performance</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>See CHANGELOG.md in the repository.</PackageReleaseNotes>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.6" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.6" />
+    <PackageReference Include="ProtoPromise" Version="3.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+  <!-- The source generator ships inside this package as an analyzer, so a
+       single PackageReference wires up both the runtime and code generation.
+       The ProjectReference only orders the build (no assembly reference);
+       the generator DLL is self-contained (RazorBlade is compiled in). -->
+  <ItemGroup>
+    <ProjectReference Include="..\Ef.Mems.Generator\Ef.Mems.Generator.csproj"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
+    <None Include="..\Ef.Mems.Generator\bin\$(Configuration)\netstandard2.0\Ef.Mems.Generator.dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,135 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.UnionModel>
+@using Ef.Mems.SourceGenerators
+    // UseUnion read view "@Model.Name": the members' common cached
+    // properties, matched by name and type.
+    public interface @Model.InterfaceName
+    {
+@foreach (var p in Model.CommonProps)
+{
+        @:@p.RoType @p.Name { get; }
+}
+    }
+
+    // Read-only union over the member stores, in declaration order. Reads
+    // compose the members' own query methods (inheriting their snapshot and
+    // locking discipline); they are stale-ok and NOT a consistent cross-store
+    // snapshot.
+    public sealed class @Model.ClassName
+    {
+@for (var i = 0; i < Model.Members.Count; i++)
+{
+        @:private readonly @(Model.Members[i].Name)EntityStore _m@(i);
+}
+        internal @(Model.ClassName)(@Model.CtorParams)
+        {
+@for (var i = 0; i < Model.Members.Count; i++)
+{
+            @:_m@(i) = m@(i) ?? throw new System.ArgumentNullException(nameof(m@(i)), "UseUnion(...).Build() must run after every member store's Build()");
+}
+        }
+
+        public int Count => @Model.CountSum;
+
+        public async ValueTask<List<@Model.InterfaceName>> Query(Predicate<@Model.InterfaceName> predicate, int skip, int take)
+        {
+            if (take <= 0) return new List<@Model.InterfaceName>(0);
+            if (skip < 0) skip = 0;
+            var result = new List<@Model.InterfaceName>(take);
+@for (var i = 0; i < Model.Members.Count; i++)
+{
+            @:if (take > 0) {
+                @:if (skip > 0) {
+                    @:// Residual skip: the counted variant tells how much of
+                    @:// it this member consumed.
+                    @:var (items@(i), matched@(i)) = await _m@(i).QueryCount(predicate, skip, take);
+                    @:result.AddRange(items@(i));
+                    @:take -= items@(i).Count;
+                    @:skip = Math.Max(0, skip - matched@(i));
+                @:} else {
+                    @:var items@(i) = await _m@(i).Query(predicate, 0, take);
+                    @:result.AddRange(items@(i));
+                    @:take -= items@(i).Count;
+                @:}
+            @:}
+}
+            return result;
+        }
+
+        public ValueTask<List<@Model.InterfaceName>> Query(Predicate<@Model.InterfaceName> predicate)
+            => Query(predicate, 0, int.MaxValue);
+
+        public async ValueTask<(List<@Model.InterfaceName> Items, int MatchCount)> QueryCount(Predicate<@Model.InterfaceName> predicate, int skip, int take)
+        {
+            if (skip < 0) skip = 0;
+            var result = new List<@Model.InterfaceName>(Math.Max(take, 0));
+            int total = 0;
+@for (var i = 0; i < Model.Members.Count; i++)
+{
+            @:{
+                @:var (items@(i), matched@(i)) = await _m@(i).QueryCount(predicate, skip, take);
+                @:total += matched@(i);
+                @:result.AddRange(items@(i));
+                @:take -= items@(i).Count;
+                @:skip = Math.Max(0, skip - matched@(i));
+            @:}
+}
+            return (result, total);
+        }
+
+        public async ValueTask<@Model.InterfaceName> FirstOrDefault(Predicate<@Model.InterfaceName> predicate)
+        {
+@for (var i = 0; i < Model.Members.Count; i++)
+{
+            @:{
+                @:var hit@(i) = await _m@(i).FirstOrDefault(predicate);
+                @:if (hit@(i) != null) return hit@(i);
+            @:}
+}
+            return null;
+        }
+
+        public async ValueTask<List<@Model.InterfaceName>> Query(int skip, int take)
+        {
+            if (take <= 0) return new List<@Model.InterfaceName>(0);
+            if (skip < 0) skip = 0;
+            var result = new List<@Model.InterfaceName>(take);
+@for (var i = 0; i < Model.Members.Count; i++)
+{
+            @:if (take > 0) {
+                @:var count@(i) = _m@(i).Count;
+                @:if (skip @("<") count@(i)) {
+                    @:var items@(i) = await _m@(i).Query(skip, take);
+                    @:result.AddRange(items@(i));
+                    @:take -= items@(i).Count;
+                    @:skip = 0;
+                @:} else {
+                    @:skip -= count@(i);
+                @:}
+            @:}
+}
+            return result;
+        }
+
+        public async ValueTask<(List<@Model.InterfaceName> Items, int MatchCount)> QuerySortCount<TKey>(Predicate<@Model.InterfaceName> predicate, int skip, int take, Func<@Model.InterfaceName, TKey> keySelector, IComparer<TKey> keyComparer = null, bool descending = false)
+        {
+            if (skip < 0) skip = 0;
+            // Each member computes its own bounded top-(skip+take) window;
+            // the merge slices the global order out of the windows.
+            int window = take <= 0 ? 0 : checked(skip + take);
+            int total = 0;
+            var windows = new IReadOnlyList<@Model.InterfaceName>[@Model.Members.Count];
+@for (var i = 0; i < Model.Members.Count; i++)
+{
+            @:{
+                @:var (items@(i), matched@(i)) = await _m@(i).QuerySortCount(predicate, 0, window, keySelector, keyComparer, descending);
+                @:total += matched@(i);
+                @:windows[@i] = items@(i);
+            @:}
+}
+            var merged = UnionQuery.MergeSorted(windows, keySelector, keyComparer, descending, skip, take);
+            return (merged, total);
+        }
+
+        public async ValueTask<List<@Model.InterfaceName>> QuerySort<TKey>(Predicate<@Model.InterfaceName> predicate, int skip, int take, Func<@Model.InterfaceName, TKey> keySelector, IComparer<TKey> keyComparer = null, bool descending = false)
+            => (await QuerySortCount(predicate, skip, take, keySelector, keyComparer, descending)).Items;
+    }

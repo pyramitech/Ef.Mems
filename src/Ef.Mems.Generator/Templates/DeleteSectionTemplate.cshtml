@@ -1,0 +1,213 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.EntityModel>
+@using Ef.Mems.SourceGenerators
+        public async Task<bool> Delete(@Model.EntityType item@(Model.ContextParam))
+        {
+@foreach (var ext in Model.Extensions)
+{
+    if (ext.HasBeforeDelete)
+    {
+            @:@(ext.Type).BeforeDelete(_store, item@(ext.ValuesArg)@(ext.ContextArg));
+    }
+}
+            using var ctx = _store.GetContext();
+            ctx.Remove(item);
+            using (await _rwl.WriterLockAsync()) {
+                var removed = await ctx.SaveChangesAsync() > 0;
+                if (!removed) return false;
+@if (Model.HasMaterializedSorts)
+{
+                @:var oldRoSort = GetBy@(Model.UpdateKey)(item.@(Model.UpdateKey));
+}
+@if (Model.SeqIndex != null)
+{
+                @:_seq_@(Model.SeqIndex.Name)[item.@(Model.SeqIndex.Name)] = null;
+}
+@foreach (var idx in Model.Indexes)
+{
+                @:Snapshot.RemoveItem(ref _idx_@(idx.Name), @idx.KeyFrom("item"));
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+                @:if (oldRoSort != null) __SortRemove_@(srt.Name)(oldRoSort);
+}
+                --this.Count;
+                #pragma warning disable CS0618
+@foreach (var mtm in Model.ManyToManys)
+{
+    foreach (var target in mtm.Others)
+    {
+                @:for (int i = 0; i < (item.@(mtm.NavName)?.Count ?? 0); i++) {
+                    @:var mtm = item.@(mtm.NavName)[i];
+    Write(new MtmRemoveCoreTemplate(mtm.Fragment(target)));
+                @:}
+    }
+}
+                #pragma warning restore CS0618
+                return true;
+            }
+        }
+
+        public async Task<bool> DeleteRange(ICollection<@Model.EntityType> items@(Model.ContextParam))
+        {
+            using var ctx = _store.GetContext();
+            foreach (var item in items) {
+@foreach (var ext in Model.Extensions)
+{
+    if (ext.HasBeforeDelete)
+    {
+                @:@(ext.Type).BeforeDelete(_store, item@(ext.ValuesArg)@(ext.ContextArg));
+    }
+}
+                ctx.Remove(item);
+            }
+            using (await _rwl.WriterLockAsync()) {
+                var removed = await ctx.SaveChangesAsync() > 0;
+                if (!removed) return false;
+                #pragma warning disable CS0618
+                this.Count -= items.Count;
+@foreach (var idx in Model.Indexes)
+{
+                @:var idx_@(idx.Name) = Snapshot.Clone(_idx_@(idx.Name));
+}
+                foreach (var item in items) {
+@if (Model.HasMaterializedSorts)
+{
+                    @:var oldRoSort = GetBy@(Model.UpdateKey)(item.@(Model.UpdateKey));
+}
+@if (Model.SeqIndex != null)
+{
+                    @:_seq_@(Model.SeqIndex.Name)[item.@(Model.SeqIndex.Name)] = null;
+}
+@foreach (var idx in Model.Indexes)
+{
+                    @:idx_@(idx.Name).Remove(@idx.KeyFrom("item"));
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+                    @:if (oldRoSort != null) __SortRemove_@(srt.Name)(oldRoSort);
+}
+@foreach (var mtm in Model.ManyToManys)
+{
+    foreach (var target in mtm.Others)
+    {
+                    @:for (int i = 0; i < (item.@(mtm.NavName)?.Count ?? 0); i++) {
+                        @:var mtm = item.@(mtm.NavName)[i];
+    Write(new MtmRemoveCoreTemplate(mtm.Fragment(target)));
+                    @:}
+    }
+}
+                }
+@foreach (var idx in Model.Indexes)
+{
+                @:Volatile.Write(ref _idx_@(idx.Name), idx_@(idx.Name));
+}
+                #pragma warning restore CS0618
+                return true;
+            }
+        }
+
+        // Bulk delete-all + identity reseed, mirroring what Refresh() would
+        // publish for an empty table. TRUNCATE semantics: rows are not
+        // enumerated and Before* hooks do NOT run. Other stores' cached
+        // many-to-many navigations referencing these rows stay stale until
+        // their Refresh(). Returns the number of rows deleted.
+        public async Task<int> Truncate()
+        {
+            using var ctx = _store.GetContext();
+            using (await _rwl.WriterLockAsync()) {
+                var deleted = await Truncation.DeleteAllAndReseed<@Model.EntityType>(ctx);
+                this.Count = 0;
+@foreach (var seq in Model.SeqIndexes)
+{
+                @:Volatile.Write(ref _seq_@(seq.Name), new @(Model.Name)ReadOnly[1]);
+                @:_seqLen_@(seq.Name) = 1;
+}
+@foreach (var idx in Model.Indexes)
+{
+    if (idx.Type == "string")
+    {
+                @:Volatile.Write(ref _idx_@(idx.Name), new Dictionary<@idx.Type, @(Model.Name)ReadOnly>(StringComparer.Ordinal));
+    }
+    else
+    {
+                @:Volatile.Write(ref _idx_@(idx.Name), new Dictionary<@idx.Type, @(Model.Name)ReadOnly>());
+    }
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+                @:Volatile.Write(ref _sort_@(srt.Name), Array.Empty<@(Model.Name)ReadOnly>());
+}
+                return deleted;
+            }
+        }
+
+        public void StageDelete(EntityTransaction trx, ICollection<@Model.EntityType> items)
+        {
+            trx.StageDelete(this, items);
+        }
+
+        public void StageDelete(EntityTransaction trx, @Model.EntityType item)
+        {
+            trx.StageDelete(this, item);
+        }
+
+        // Staged-delete section of CommitTransaction; runs under the store's
+        // writer lock, held by the caller.
+        private void __CommitDeletes(DbContext ctx, ICollection<object> items, EntityTransaction.TransactionUpdateInterals internals, object context)
+        {
+            foreach (var itemObj in items) {
+                var item = itemObj as @Model.EntityType;
+@foreach (var ext in Model.Extensions)
+{
+    if (ext.HasBeforeDelete)
+    {
+                @:@(ext.Type).BeforeDelete(_store, item@(ext.ValuesArg)@(ext.ContextArg));
+    }
+}
+                ctx.Remove(item);
+            }
+@if (Model.ManyToManys.Count != 0)
+{
+                @:foreach (var itemObj in items) {
+                    @:var item = itemObj as @Model.EntityType;
+    foreach (var mtm in Model.ManyToManys)
+    {
+                    @:if ((item.@(mtm.NavName)?.Count ?? 0) != 0) {
+                        @:internals.InsertDelete(typeof(@mtm.ChildType), item.@(mtm.NavName), EntityCommitFunctions.Delete@(mtm.NormTypeName));
+                    @:}
+    }
+                @:}
+}
+                #pragma warning disable CS0618
+                internals.ContinueWith.Add(() => {
+                    this.Count -= items.Count;
+@foreach (var idx in Model.Indexes)
+{
+                    @:var idx_@(idx.Name) = Snapshot.Clone(_idx_@(idx.Name));
+}
+                    foreach (var itemObj in items) {
+                        var item = itemObj as @Model.EntityType;
+@if (Model.HasMaterializedSorts)
+{
+                        @:var oldRoSort = GetBy@(Model.UpdateKey)(item.@(Model.UpdateKey));
+}
+@if (Model.SeqIndex != null)
+{
+                        @:_seq_@(Model.SeqIndex.Name)[item.@(Model.SeqIndex.Name)] = null;
+}
+@foreach (var idx in Model.Indexes)
+{
+                        @:idx_@(idx.Name).Remove(@idx.KeyFrom("item"));
+}
+@foreach (var srt in Model.MaterializedSorts)
+{
+                        @:if (oldRoSort != null) __SortRemove_@(srt.Name)(oldRoSort);
+}
+                    }
+@foreach (var idx in Model.Indexes)
+{
+                    @:Volatile.Write(ref _idx_@(idx.Name), idx_@(idx.Name));
+}
+                });
+                #pragma warning restore CS0618
+        }

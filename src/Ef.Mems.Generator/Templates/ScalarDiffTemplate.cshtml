@@ -1,0 +1,59 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.ScalarDiffModel>
+@using Ef.Mems.SourceGenerators
+@foreach (var p in Model.Entity.NonIndexProperties)
+{
+            @:if (@p.NotEqual("original", "item")) {
+                @:if (entry == null) {
+@if (Model.IsCommit)
+{
+                    @:entry = ctx.EnsureAttached(updateEntity);
+}
+else
+{
+                    @:entry = ctx.EnsureAttached(item);
+}
+                @:}
+@if (Model.IsCommit)
+{
+                @:updateEntity.@(p.Name) = item.@(p.Name);
+}
+                @:entry.Property(x => x.@(p.Name)).IsModified = true;
+            @:}
+}
+@foreach (var o in Model.Entity.Owneds)
+{
+            @:// Owned member @o.Name: member-wise change detection, unit
+            @:// write (all owned columns) when anything differs, including
+            @:// null transitions.
+            @:var __ownedChanged_@(o.Name) = item.@(o.Name) == null ? original.@(o.Name) != null : (original.@(o.Name) == null || @(o.MembersNotEqual("original", "item")));
+            @:if (__ownedChanged_@(o.Name)) {
+                @:if (entry == null) {
+@if (Model.IsCommit)
+{
+                    @:entry = ctx.EnsureAttached(updateEntity);
+}
+else
+{
+                    @:entry = ctx.EnsureAttached(item);
+}
+                @:}
+                @:var __ownedRef_@(o.Name) = entry.Reference(x => x.@(o.Name));
+                @:if (item.@(o.Name) != null) {
+@if (Model.IsCommit)
+{
+                    @:__ownedRef_@(o.Name).CurrentValue = item.@(o.Name);
+}
+                    @:var __ownedEntry_@(o.Name) = __ownedRef_@(o.Name).TargetEntry;
+                    @:__ownedEntry_@(o.Name).State = EntityState.Unchanged;
+                    @:__ownedEntry_@(o.Name).State = EntityState.Modified;
+                @:} else {
+                    @:// Removal of an optional owned member: track a copy of
+                    @:// the original as Deleted so EF nulls its columns; never
+                    @:// attach the cached instance itself.
+                    @:__ownedRef_@(o.Name).CurrentValue = @(o.CloneExpr("original"));
+                    @:var __ownedEntry_@(o.Name) = __ownedRef_@(o.Name).TargetEntry;
+                    @:__ownedEntry_@(o.Name).State = EntityState.Unchanged;
+                    @:__ownedEntry_@(o.Name).State = EntityState.Deleted;
+                @:}
+            @:}
+}

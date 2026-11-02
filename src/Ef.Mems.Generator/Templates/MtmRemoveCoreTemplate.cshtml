@@ -1,0 +1,9 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.MtmFragmentModel>
+@using Ef.Mems.SourceGenerators
+var readOnlyOther = _store.@(Model.Target.DbSetProperty).GetBy@(Model.Target.IndexName)(mtm.@(Model.Target.ClassProp));
+if (readOnlyOther == null) continue;
+var raw = readOnlyOther.__GetRawEntity();
+var otherMtm = raw.@(Model.Target.OtherNavName).FirstOrDefault(x => @Model.KeysEqual);
+var otherMtmReadOnly = readOnlyOther.@(Model.Target.OtherNavName).FirstOrDefault(x => @Model.KeysEqual);
+if (otherMtm != null) raw.@(Model.Target.OtherNavName).Remove(otherMtm);
+if (otherMtmReadOnly != null) readOnlyOther.__Remove_@(Model.Target.OtherNavName)(otherMtmReadOnly);

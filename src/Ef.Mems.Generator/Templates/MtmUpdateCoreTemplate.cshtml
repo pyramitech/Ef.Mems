@@ -1,0 +1,19 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.MtmFragmentModel>
+@using Ef.Mems.SourceGenerators
+var readOnlyOther = _store.@(Model.Target.DbSetProperty).GetBy@(Model.Target.IndexName)(mtm.@(Model.Target.ClassProp));
+if (readOnlyOther == null) continue;
+var raw = readOnlyOther.__GetRawEntity();
+var toUpdateSub = raw.@(Model.Target.OtherNavName).FirstOrDefault(x => @Model.KeysEqual);
+if (toUpdateSub != null) {
+@foreach (var p in Model.ChildProps)
+{
+    @:toUpdateSub.@(p.Name) = mtm.@(p.Name);
+}
+}
+@if (Model.WithAddElse)
+{
+@:else {
+    @:raw.@(Model.Target.OtherNavName).Add(mtm);
+    @:readOnlyOther.__Add_@(Model.Target.OtherNavName)(new @(Model.ReadOnlyType)(mtm));
+@:}
+}

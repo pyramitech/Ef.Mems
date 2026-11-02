@@ -1,0 +1,19 @@
+@inherits RazorBlade.PlainTextTemplate<Ef.Mems.SourceGenerators.ChildDtoModel>
+@using Ef.Mems.SourceGenerators
+    public sealed class @(Model.ClassName)ReadOnly
+    {
+        private readonly @Model.EntityType _entity;
+        internal @(Model.ClassName)ReadOnly(@Model.EntityType entity) => _entity = entity;
+@foreach (var p in Model.Props)
+{
+        @:public @p.RoType @p.Name => _entity.@(p.Name);
+}
+
+        public @Model.EntityType GetEntity() => new @Model.EntityType
+        {
+@for (int i = 0; i < Model.Props.Count; i++)
+{
+            @:@(Model.Props[i].Name) = _entity.@(Model.Props[i].Name)@(i < Model.Props.Count - 1 ? "," : "")
+}
+        };
+    }
