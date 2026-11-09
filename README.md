@@ -1,5 +1,7 @@
 # Ef.Mems
 
+[![NuGet](https://img.shields.io/nuget/v/Ef.Mems.svg)](https://www.nuget.org/packages/Ef.Mems)
+
 > Library primarily human written and used in production. AI was used to clean up generator code: moved StringBuilder code into .cshtml templates, built benchmarks, also found and fixed some edge cases. AI was also used for documentation and with preparing the public release. The library acts as a cache for a single-producer architecture, generates readonly classes so someone doesn't accidentally edit a cached entity directly. Has limitations, but gives massive performance boost when used correctly. 
 
 Ef.Mems is an in-memory cache layer for Entity Framework Core, built for applications
@@ -39,7 +41,7 @@ benchmark projects around them:
 
 | Project | Role |
 |---|---|
-| `src/Ef.Mems` | Runtime: base classes (`DataStore<T>`, `EntityStore<T>`), query engine, transactions, search, safety exceptions. Ships as `lib/net9.0`. |
+| `src/Ef.Mems` | Runtime: base classes (`DataStore<T>`, `EntityStore<T>`), query engine, transactions, search, safety exceptions. Ships as `lib/net10.0`. |
 | `src/Ef.Mems.Generator` | Roslyn incremental source generator. Reads your `ConstructStore` declaration and emits the cache implementation at compile time. Ships inside the same package as `analyzers/dotnet/cs`. |
 | `tests/` | xUnit suites: runtime behavior against SQLite (`Ef.Mems.Tests`) and generator diagnostics, compile-shape matrix and incremental-caching guarantees (`Ef.Mems.Generator.Tests`). |
 | `benchmarks/Ef.Mems.Benchmarks` | BenchmarkDotNet suite documenting the performance characteristics (see its own README). |
@@ -65,8 +67,8 @@ state.
 
 ## Requirements and setup
 
-- .NET 9.0 (SDK 9.0.300 or later - the generator is built against Roslyn 4.14)
-- Entity Framework Core 9.x with a relational provider
+- .NET 10.0 (SDK 10.0.100 or later)
+- Entity Framework Core 10.x with a relational provider
 - ProtoPromise 3.5 (transaction gating; transitive via `Ef.Mems`)
 
 Install the single package; it carries both the runtime library and the source
@@ -74,7 +76,7 @@ generator, so no analyzer wiring is needed:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Ef.Mems" Version="1.0.0" />
+  <PackageReference Include="Ef.Mems" Version="1.0.1" />
 </ItemGroup>
 ```
 

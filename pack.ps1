@@ -3,7 +3,7 @@
 #   .\pack.ps1                       # Release
 #   .\pack.ps1 -SkipTests            # pack only
 #
-# The single Ef.Mems package contains the runtime library (lib/net9.0) and the
+# The single Ef.Mems package contains the runtime library (lib/net10.0) and the
 # source generator (analyzers/dotnet/cs); consumers need one PackageReference.
 param(
     [ValidateSet('Release', 'Debug')]

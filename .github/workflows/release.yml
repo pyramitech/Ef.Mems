@@ -1,0 +1,89 @@
+name: Release
+
+# Publishes Ef.Mems to nuget.org when a version tag is pushed:
+#
+#   git tag v1.2.3 && git push origin v1.2.3
+#
+# The tag must match <Version> in Directory.Build.props exactly; the job fails
+# before packing otherwise. Requires the repository secret NUGET_API_KEY
+# (an nuget.org API key scoped to "Push" on the Ef.Mems package).
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+permissions:
+  contents: write   # create the GitHub release
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  CI: true
+
+jobs:
+  publish:
+    name: Test, pack, publish
+    runs-on: ubuntu-latest
+    environment: nuget
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Check tag matches Directory.Build.props version
+        id: version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PROPS=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -1)
+          echo "tag=$TAG props=$PROPS"
+          if [ "$TAG" != "$PROPS" ]; then
+            echo "::error::Tag v$TAG does not match <Version>$PROPS</Version> in Directory.Build.props"
+            exit 1
+          fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          # anything after x.y.z (e.g. -beta.1) marks a prerelease
+          if [[ "$TAG" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Restore
+        run: dotnet restore Ef.Mems.sln
+
+      - name: Build
+        run: dotnet build Ef.Mems.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test Ef.Mems.sln -c Release --no-build
+
+      - name: Pack
+        run: dotnet pack src/Ef.Mems/Ef.Mems.csproj -c Release --no-build -o artifacts
+
+      - name: Verify package contents
+        shell: bash
+        run: |
+          PKG=artifacts/Ef.Mems.${{ steps.version.outputs.version }}.nupkg
+          test -f "$PKG" || { echo "::error::$PKG not found"; ls artifacts; exit 1; }
+          unzip -l "$PKG" | tee /tmp/contents.txt
+          grep -q 'lib/net10.0/Ef.Mems.dll' /tmp/contents.txt || { echo "::error::runtime dll missing"; exit 1; }
+          grep -q 'analyzers/dotnet/cs/Ef.Mems.Generator.dll' /tmp/contents.txt || { echo "::error::generator dll missing"; exit 1; }
+          grep -q 'README.md' /tmp/contents.txt || { echo "::error::README missing"; exit 1; }
+
+      - name: Push to nuget.org
+        run: >
+          dotnet nuget push "artifacts/Ef.Mems.${{ steps.version.outputs.version }}.nupkg"
+          --api-key "${{ secrets.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Ef.Mems ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          files: |
+            artifacts/*.nupkg
+            artifacts/*.snupkg
