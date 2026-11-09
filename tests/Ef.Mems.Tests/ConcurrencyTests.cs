@@ -37,14 +37,21 @@ namespace Ef.Mems.Tests
                 },
             });
 
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            // The writer drives the test with a fixed number of updates; readers spin
+            // until it is done. A time-boxed writer is not reliable: UntestedClass is
+            // partially cached, so each update is two SQLite round trips whose async
+            // continuations need pool threads, and four spinning readers can starve it
+            // on a 4-core CI runner (observed on ubuntu-latest). Readers therefore run
+            // on dedicated threads, not the pool.
+            const int updates = 30;
+            var writerDone = 0;
             Exception readerFailure = null;
 
-            var readers = Enumerable.Range(0, 4).Select(reader => Task.Run(() =>
+            var readers = Enumerable.Range(0, 4).Select(reader => Task.Factory.StartNew(() =>
             {
                 try
                 {
-                    while (!cts.IsCancellationRequested)
+                    while (Volatile.Read(ref writerDone) == 0)
                     {
                         // MTM arrays are CAS-swapped; iteration must never throw.
                         foreach (var join in Store.TestClasses.GetById(tc.Id).UntestedTests)
@@ -59,22 +66,28 @@ namespace Ef.Mems.Tests
                 {
                     readerFailure = ex;
                 }
-            })).ToArray();
+            }, TaskCreationOptions.LongRunning)).ToArray();
 
             var writer = Task.Run(async () =>
             {
-                var i = 0;
-                while (!cts.IsCancellationRequested)
+                try
                 {
-                    var entity = await Store.UntestedClasses.GetById(uc.Id).GetEntity();
-                    entity.UntestedTests.Single().JoinData = "gen" + i++;
-                    await Store.UntestedClasses.Update(entity);
+                    for (var i = 0; i < updates; i++)
+                    {
+                        var entity = await Store.UntestedClasses.GetById(uc.Id).GetEntity();
+                        entity.UntestedTests.Single().JoinData = "gen" + i;
+                        await Store.UntestedClasses.Update(entity);
+                    }
+                }
+                finally
+                {
+                    Volatile.Write(ref writerDone, 1);
                 }
             });
 
-            await Task.WhenAll(readers.Append(writer));
+            await Task.WhenAll(readers.Append(writer)).WaitAsync(TimeSpan.FromSeconds(60));
             Assert.Null(readerFailure);
-            Assert.StartsWith("gen", Store.UntestedClasses.GetById(uc.Id).UntestedTests.Single().JoinData);
+            Assert.Equal("gen" + (updates - 1), Store.UntestedClasses.GetById(uc.Id).UntestedTests.Single().JoinData);
         }
 
         [Fact]
