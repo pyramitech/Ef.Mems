@@ -3,54 +3,42 @@ name: CI
 on:
   push:
     branches: [master]
+    tags: ["v*"]
   pull_request:
-    branches: [master]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-env:
-  DOTNET_NOLOGO: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: true
-  CI: true
 
 jobs:
-  build-test:
-    name: Build, test, pack
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-
-      - name: Restore
-        run: dotnet restore Ef.Mems.sln
-
-      - name: Build
-        run: dotnet build Ef.Mems.sln -c Release --no-restore
-
-      - name: Test
-        run: dotnet test Ef.Mems.sln -c Release --no-build --logger "trx;LogFileName=results.trx"
-
-      - name: Pack (sanity check only)
-        run: dotnet pack src/Ef.Mems/Ef.Mems.csproj -c Release --no-build -o artifacts
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
+      - run: dotnet build Ef.Mems.sln -c Release
+      - run: dotnet test Ef.Mems.sln -c Release --no-build
+      - name: Pack
+        if: runner.os == 'Windows'
+        run: dotnet pack src/Ef.Mems/Ef.Mems.csproj -c Release --no-build -o artifacts/packages
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
         with:
-          name: test-results
-          path: '**/TestResults/*.trx'
-          retention-days: 7
+          name: packages
+          path: artifacts/packages/*.*nupkg
 
-      - name: Upload package
-        uses: actions/upload-artifact@v4
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          name: nupkg
-          path: artifacts/*nupkg
-          retention-days: 7
+          name: packages
+          path: packages
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet nuget push "packages/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
